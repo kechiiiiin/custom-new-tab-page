@@ -49,6 +49,7 @@
       <span id="result-count"></span>
       <div class="toolbar-right">
         <select id="sort">
+          <option value="group">サービス別</option>
           <option value="usage">よく使う順</option>
           <option value="name">名前順</option>
           <option value="recent">追加が新しい順</option>
@@ -249,6 +250,28 @@ const SERVICE_RULES=[
   ['miro',          (h)=>h==='miro.com'],
   ['sentry',        (h)=>h==='sentry.io'||h.endsWith('.sentry.io')],
 ];
+// 表示名とアイコン。icon は画像 URL かファビコン取得用のドメイン
+const SERVICE_META={
+  'github':{name:'GitHub',icon:'github.com'},
+  'gitlab':{name:'GitLab',icon:'gitlab.com'},
+  'confluence':{name:'Confluence',icon:'confluence.atlassian.com'},
+  'jira':{name:'Jira',icon:'jira.atlassian.com'},
+  'figma':{name:'Figma',icon:'figma.com'},
+  'google-docs':{name:'Google ドキュメント',icon:'https://ssl.gstatic.com/docs/documents/images/kix-favicon7.ico'},
+  'google-sheets':{name:'Google スプレッドシート',icon:'https://ssl.gstatic.com/docs/spreadsheets/favicon3.ico'},
+  'google-slides':{name:'Google スライド',icon:'https://ssl.gstatic.com/docs/presentations/images/favicon5.ico'},
+  'google-forms':{name:'Google フォーム',icon:'https://ssl.gstatic.com/docs/forms/device_home/android_192.png'},
+  'google-drive':{name:'Google ドライブ',icon:'https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png'},
+  'google-calendar':{name:'Google カレンダー',icon:'calendar.google.com'},
+  'gmail':{name:'Gmail',icon:'mail.google.com'},
+  'aws':{name:'AWS',icon:'aws.amazon.com'},
+  'slack':{name:'Slack',icon:'slack.com'},
+  'discord':{name:'Discord',icon:'discord.com'},
+  'obsidian':{name:'Obsidian',icon:'obsidian.md'},
+  'notion':{name:'Notion',icon:'notion.so'},
+  'miro':{name:'Miro',icon:'miro.com'},
+  'sentry':{name:'Sentry',icon:'sentry.io'},
+};
 function serviceTag(url){
   try{
     const u=new URL(url),h=u.hostname.replace(/^www\./,'');
@@ -293,16 +316,21 @@ function hostOf(url){try{const u=new URL(url);return /^https?:$/.test(u.protocol
 function hashHue(s){let h=0;for(const c of s)h=(h*31+c.codePointAt(0))>>>0;return h%360;}
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}
 function normalizeUrl(u){u=u.trim();if(!u)return '';return /^[a-z][a-z0-9+.-]*:/i.test(u)?u:'https://'+u;}
+const s2=domain=>`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`;
 function faviconEl(lk){
   const box=el('div','favicon');
+  const svc=SERVICE_META[serviceTag(lk.url)];
   const domain=lk.icon||(/^https?:/i.test(lk.url)?hostOf(lk.url):'');
+  // サービス固有アイコン → サイトのファビコン → 頭文字 の順に試す
+  const srcs=[svc&&(/^https?:/.test(svc.icon)?svc.icon:s2(svc.icon)),domain&&s2(domain)].filter(Boolean);
   const fallback=()=>{box.textContent=(lk.label||'?').trim().charAt(0).toUpperCase();box.classList.add('letter');box.style.setProperty('--h',hashHue(lk.label||''));};
-  if(domain){
-    const img=document.createElement('img');img.alt='';img.loading='lazy';
-    img.src=`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`;
-    img.onerror=()=>{img.remove();fallback();};
-    box.appendChild(img);
-  }else fallback();
+  if(!srcs.length){fallback();return box;}
+  const img=document.createElement('img');img.alt='';img.loading='lazy';
+  const next=()=>{const src=srcs.shift();if(src)img.src=src;else{img.remove();fallback();}};
+  img.onerror=next;
+  // s2 は未登録ドメインに 16px の地球儀を返すので、それも「なし」とみなす
+  img.onload=()=>{if(img.src.includes('/s2/favicons')&&img.naturalWidth<=16)next();};
+  next();box.appendChild(img);
   return box;
 }
 function tagChip(tag,onClick){
@@ -312,7 +340,7 @@ function tagChip(tag,onClick){
 }
 
 /* STATE */
-const state={query:'',tags:new Set(),sort:localStorage.getItem('dashboard_sort')||'usage',sel:0};
+const state={query:'',tags:new Set(),sort:localStorage.getItem('dashboard_sort')||'group',sel:0};
 let visible=[];
 
 function allTags(){
@@ -342,7 +370,9 @@ function score(lk,words){
   return s;
 }
 function sortLinks(arr,words){
+  const usage=(a,b)=>(b.clicks||0)-(a.clicks||0)||(b.lastUsed||0)-(a.lastUsed||0)||a.label.localeCompare(b.label,'ja');
   const by={
+    group:usage,
     usage:(a,b)=>(b.clicks||0)-(a.clicks||0)||(b.lastUsed||0)-(a.lastUsed||0)||a.label.localeCompare(b.label,'ja'),
     name:(a,b)=>a.label.localeCompare(b.label,'ja'),
     recent:(a,b)=>(b.created||0)-(a.created||0),
@@ -389,25 +419,48 @@ function renderActiveTags(){
   box.style.display=state.tags.size?'flex':'none';
 }
 
+function cardEl(lk,selected){
+  const a=el('a','link-card'+(selected?' selected':''));
+  a.href=lk.url;a.dataset.id=lk.id;a.title=lk.url;
+  const svcTag=serviceTag(lk.url);
+  const body=el('div','lbody');
+  body.appendChild(el('div','lname',lk.label));
+  // サービス名はアイコンで分かるのでチップからは外し、サブタイトルに出す
+  const sub=el('div','lsub');
+  sub.appendChild(el('span','lhost',SERVICE_META[svcTag]?.name||hostOf(lk.url)||lk.url));
+  lk.tags.filter(t=>t!==svcTag).forEach(t=>sub.appendChild(tagChip(t,toggleTag)));
+  body.appendChild(sub);
+  const eb=el('button','ledit','✎');eb.title='編集';
+  eb.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();openModal(lk.id);});
+  a.append(faviconEl(lk),body,eb);
+  a.addEventListener('click',()=>recordUse(lk));
+  a.addEventListener('auxclick',e=>{if(e.button===1)recordUse(lk);});
+  return a;
+}
+function groupBy(links){
+  // サービス別。件数の多い順、サービス外と1件だけのサービスは「その他」として末尾
+  const cnt=new Map(),m=new Map();
+  links.forEach(l=>{const k=serviceTag(l.url);cnt.set(k,(cnt.get(k)||0)+1);});
+  links.forEach(l=>{let k=serviceTag(l.url);if(cnt.get(k)<2)k='';if(!m.has(k))m.set(k,[]);m.get(k).push(l);});
+  return [...m.entries()].sort((a,b)=>(a[0]==='')-(b[0]==='')||b[1].length-a[1].length);
+}
 function renderGrid(){
   const q=parseQuery(state.query);
+  const filtering=!!(state.query.trim()||state.tags.size);
+  const grouped=state.sort==='group'&&!q.words.length;
   visible=sortLinks(AppData.links.filter(l=>matches(l,q)),q.words);
+  if(grouped)visible=groupBy(visible).flatMap(([,ls])=>ls);
   if(state.sel>=visible.length)state.sel=Math.max(0,visible.length-1);
   const grid=document.getElementById('grid');grid.innerHTML='';
-  visible.forEach((lk,i)=>{
-    const a=el('a','link-card'+(i===state.sel&&(state.query||state.tags.size)?' selected':''));
-    a.href=lk.url;a.dataset.id=lk.id;
-    const body=el('div','lbody');
-    body.append(el('div','lname',lk.label),el('div','lhost',hostOf(lk.url)||lk.url));
-    const tags=el('div','ltags');lk.tags.forEach(t=>tags.appendChild(tagChip(t,toggleTag)));
-    body.appendChild(tags);
-    const eb=el('button','ledit','✎');eb.title='編集';
-    eb.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();openModal(lk.id);});
-    a.append(faviconEl(lk),body,eb);
-    a.addEventListener('click',()=>recordUse(lk));
-    a.addEventListener('auxclick',e=>{if(e.button===1)recordUse(lk);});
-    grid.appendChild(a);
-  });
+  if(grouped){
+    let i=0;
+    groupBy(visible).forEach(([k,ls])=>{
+      const h=el('div','group-head');
+      h.append(el('span','gname',SERVICE_META[k]?.name||(k?k:'その他')),el('span','gcount',ls.length));
+      grid.appendChild(h);
+      ls.forEach(lk=>{grid.appendChild(cardEl(lk,filtering&&i===state.sel));i++;});
+    });
+  }else visible.forEach((lk,i)=>grid.appendChild(cardEl(lk,filtering&&i===state.sel)));
   document.getElementById('result-count').textContent=
     (state.query||state.tags.size)?`${visible.length} / ${AppData.links.length} 件`:`${AppData.links.length} 件`;
   const empty=document.getElementById('empty');
