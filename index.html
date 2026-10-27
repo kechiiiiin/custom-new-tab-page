@@ -434,7 +434,7 @@ function renderActiveTags(){
   box.style.display=state.tags.size?'flex':'none';
 }
 
-function cardEl(lk,selected){
+function cardEl(lk,selected,groupTag){
   const a=el('a','link-card'+(selected?' selected':''));
   a.href=lk.url;a.dataset.id=lk.id;a.title=lk.url;
   const svcTag=serviceTag(lk.url);
@@ -443,7 +443,8 @@ function cardEl(lk,selected){
   // サービス名はアイコンで分かるのでチップからは外し、サブタイトルに出す
   const sub=el('div','lsub');
   sub.appendChild(el('span','lhost',SERVICE_META[svcTag]?.name||hostOf(lk.url)||lk.url));
-  lk.tags.filter(t=>t!==svcTag).forEach(t=>sub.appendChild(tagChip(t,toggleTag)));
+  // グループ見出しと同じタグはチップに出さない
+  lk.tags.filter(t=>t!==svcTag&&t!==groupTag).forEach(t=>sub.appendChild(tagChip(t,toggleTag)));
   body.appendChild(sub);
   const eb=el('button','ledit','✎');eb.title='編集';
   eb.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();openModal(lk.id);});
@@ -452,11 +453,16 @@ function cardEl(lk,selected){
   a.addEventListener('auxclick',e=>{if(e.button===1)recordUse(lk);});
   return a;
 }
+function groupOf(l){
+  // 最初の自分で付けたタグ（サービス名・archive 以外）。無ければサービス名
+  const svc=serviceTag(l.url);
+  return l.tags.find(t=>t!==svc&&t!==ARCHIVE_TAG&&!SERVICE_META[t])||svc||'';
+}
 function groupKeys(){
-  // リンクID → グループ。サービス外と1件だけのサービスは「その他」('')
+  // リンクID → グループ。どれにも当てはまらないものと1件だけのグループは「その他」('')
   const cnt=new Map(),keys=new Map();
-  AppData.links.forEach(l=>{const k=serviceTag(l.url);cnt.set(k,(cnt.get(k)||0)+1);});
-  AppData.links.forEach(l=>{const k=serviceTag(l.url);keys.set(l.id,cnt.get(k)<2?'':k);});
+  AppData.links.forEach(l=>{const k=groupOf(l);cnt.set(k,(cnt.get(k)||0)+1);});
+  AppData.links.forEach(l=>{const k=groupOf(l);keys.set(l.id,cnt.get(k)<2?'':k);});
   return keys;
 }
 function groupBy(links,byCount=false){
@@ -534,7 +540,7 @@ function renderGrid(){
       h.append(el('span','gname',SERVICE_META[k]?.name||(k?k:'その他')),el('span','gcount',ls.length));
       enableGroupDrag(h,k);
       grid.appendChild(h);
-      ls.forEach(lk=>{const a=cardEl(lk,filtering&&i===state.sel);enableCardDrag(a,lk,k);grid.appendChild(a);i++;});
+      ls.forEach(lk=>{const a=cardEl(lk,filtering&&i===state.sel,k);enableCardDrag(a,lk,k);grid.appendChild(a);i++;});
     });
   }else visible.forEach((lk,i)=>grid.appendChild(cardEl(lk,filtering&&i===state.sel)));
   document.getElementById('result-count').textContent=
