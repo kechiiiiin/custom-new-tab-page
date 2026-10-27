@@ -48,12 +48,7 @@
     <div class="toolbar">
       <span id="result-count"></span>
       <div class="toolbar-right">
-        <select id="sort">
-          <option value="group">サービス別</option>
-          <option value="usage">よく使う順</option>
-          <option value="name">名前順</option>
-          <option value="recent">追加が新しい順</option>
-        </select>
+        <span class="dnd-hint">ドラッグで並べ替え</span>
         <button id="add-btn" class="primary">＋ リンクを追加</button>
       </div>
     </div>
@@ -307,6 +302,12 @@ function initStorage(){
       if(AppData.version<3){AppData.links.forEach(addServiceTag);AppData.version=3;persist();}
       // v3 → v4: サービス名タグと重複するタグを整理
       if(AppData.version<4){AppData.links.forEach(dropAliasTags);AppData.version=4;persist();}
+      // v4 → v5: 並び順を手動（配列順）に。いま見えている「サービス別・よく使う順」で固定する
+      if(AppData.version<5){
+        AppData.links.sort((a,b)=>(b.clicks||0)-(a.clicks||0)||(b.lastUsed||0)-(a.lastUsed||0)||a.label.localeCompare(b.label,'ja'));
+        AppData.links=[...groupBy(AppData.links,true)].flatMap(([,ls])=>ls);
+        AppData.version=5;persist();
+      }
     }
   }catch(e){console.warn('Load failed:',e);}
 }
@@ -340,7 +341,7 @@ function tagChip(tag,onClick){
 }
 
 /* STATE */
-const state={query:'',tags:new Set(),sort:localStorage.getItem('dashboard_sort')||'group',sel:0};
+const state={query:'',tags:new Set(),sel:0};
 let visible=[];
 
 function allTags(){
@@ -370,14 +371,8 @@ function score(lk,words){
   return s;
 }
 function sortLinks(arr,words){
-  const usage=(a,b)=>(b.clicks||0)-(a.clicks||0)||(b.lastUsed||0)-(a.lastUsed||0)||a.label.localeCompare(b.label,'ja');
-  const by={
-    group:usage,
-    usage:(a,b)=>(b.clicks||0)-(a.clicks||0)||(b.lastUsed||0)-(a.lastUsed||0)||a.label.localeCompare(b.label,'ja'),
-    name:(a,b)=>a.label.localeCompare(b.label,'ja'),
-    recent:(a,b)=>(b.created||0)-(a.created||0),
-  }[state.sort];
-  return arr.sort((a,b)=>(words.length?score(b,words)-score(a,words):0)||by(a,b));
+  // 並び順は AppData.links の配列順（手動）で固定。検索時だけ一致度を優先する
+  return words.length?arr.sort((a,b)=>score(b,words)-score(a,words)):arr;
 }
 
 /* RENDER */
@@ -437,17 +432,77 @@ function cardEl(lk,selected){
   a.addEventListener('auxclick',e=>{if(e.button===1)recordUse(lk);});
   return a;
 }
-function groupBy(links){
-  // サービス別。件数の多い順、サービス外と1件だけのサービスは「その他」として末尾
-  const cnt=new Map(),m=new Map();
-  links.forEach(l=>{const k=serviceTag(l.url);cnt.set(k,(cnt.get(k)||0)+1);});
-  links.forEach(l=>{let k=serviceTag(l.url);if(cnt.get(k)<2)k='';if(!m.has(k))m.set(k,[]);m.get(k).push(l);});
-  return [...m.entries()].sort((a,b)=>(a[0]==='')-(b[0]==='')||b[1].length-a[1].length);
+function groupKeys(){
+  // リンクID → グループ。サービス外と1件だけのサービスは「その他」('')
+  const cnt=new Map(),keys=new Map();
+  AppData.links.forEach(l=>{const k=serviceTag(l.url);cnt.set(k,(cnt.get(k)||0)+1);});
+  AppData.links.forEach(l=>{const k=serviceTag(l.url);keys.set(l.id,cnt.get(k)<2?'':k);});
+  return keys;
 }
+function groupBy(links,byCount=false){
+  // グループの並びは配列内で先に出てくる順（=手動の順）。「その他」は常に末尾
+  const keys=groupKeys(),m=new Map();
+  links.forEach(l=>{const k=keys.get(l.id);if(!m.has(k))m.set(k,[]);m.get(k).push(l);});
+  return [...m.entries()].sort((a,b)=>(a[0]==='')-(b[0]==='')||(byCount?b[1].length-a[1].length:0));
+}
+
+/* DRAG & DROP: カードはグループ内で、見出しはグループごと入れ替え */
+let drag=null;
+function clearDropMarks(){document.querySelectorAll('.drop-before,.drop-after').forEach(e=>e.classList.remove('drop-before','drop-after'));}
+function dropSide(e,target,vertical){
+  const r=target.getBoundingClientRect();
+  return vertical?(e.clientY<r.top+r.height/2?'before':'after'):(e.clientX<r.left+r.width/2?'before':'after');
+}
+function moveLink(id,targetId,side){
+  const from=AppData.links.findIndex(l=>l.id===id);
+  const [lk]=AppData.links.splice(from,1);
+  let to=AppData.links.findIndex(l=>l.id===targetId);
+  if(side==='after')to++;
+  AppData.links.splice(to,0,lk);
+}
+function moveGroup(key,targetKey,side){
+  const groups=groupBy(AppData.links).filter(([k])=>k!=='');
+  const others=groupBy(AppData.links).find(([k])=>k==='')?.[1]||[];
+  const from=groups.findIndex(([k])=>k===key);
+  const [g]=groups.splice(from,1);
+  let to=groups.findIndex(([k])=>k===targetKey);
+  if(side==='after')to++;
+  groups.splice(to,0,g);
+  AppData.links=[...groups.flatMap(([,ls])=>ls),...others];
+}
+function enableCardDrag(a,lk,key){
+  a.draggable=true;
+  a.addEventListener('dragstart',e=>{drag={type:'card',id:lk.id,key};a.classList.add('dragging');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/uri-list',lk.url);});
+  a.addEventListener('dragend',()=>{drag=null;a.classList.remove('dragging');clearDropMarks();});
+  a.addEventListener('dragover',e=>{
+    if(drag?.type!=='card'||drag.key!==key||drag.id===lk.id)return;
+    e.preventDefault();clearDropMarks();a.classList.add('drop-'+dropSide(e,a,false));
+  });
+  a.addEventListener('drop',e=>{
+    if(drag?.type!=='card'||drag.key!==key||drag.id===lk.id)return;
+    e.preventDefault();moveLink(drag.id,lk.id,dropSide(e,a,false));saveData();renderGrid();
+  });
+}
+function enableGroupDrag(h,key){
+  if(key==='')return;
+  h.draggable=true;h.title='ドラッグでグループの順番を入れ替え';
+  h.addEventListener('dragstart',e=>{drag={type:'group',key};e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',key);});
+  h.addEventListener('dragend',()=>{drag=null;clearDropMarks();});
+  h.addEventListener('dragover',e=>{
+    if(drag?.type!=='group'||drag.key===key)return;
+    e.preventDefault();clearDropMarks();h.classList.add('drop-'+dropSide(e,h,true));
+  });
+  h.addEventListener('drop',e=>{
+    if(drag?.type!=='group'||drag.key===key)return;
+    e.preventDefault();moveGroup(drag.key,key,dropSide(e,h,true));saveData();renderGrid();
+  });
+}
+
 function renderGrid(){
   const q=parseQuery(state.query);
   const filtering=!!(state.query.trim()||state.tags.size);
-  const grouped=state.sort==='group'&&!q.words.length;
+  // 文字検索中は一致度順のフラット表示（並べ替え不可）
+  const grouped=!q.words.length;
   visible=sortLinks(AppData.links.filter(l=>matches(l,q)),q.words);
   if(grouped)visible=groupBy(visible).flatMap(([,ls])=>ls);
   if(state.sel>=visible.length)state.sel=Math.max(0,visible.length-1);
@@ -457,8 +512,9 @@ function renderGrid(){
     groupBy(visible).forEach(([k,ls])=>{
       const h=el('div','group-head');
       h.append(el('span','gname',SERVICE_META[k]?.name||(k?k:'その他')),el('span','gcount',ls.length));
+      enableGroupDrag(h,k);
       grid.appendChild(h);
-      ls.forEach(lk=>{grid.appendChild(cardEl(lk,filtering&&i===state.sel));i++;});
+      ls.forEach(lk=>{const a=cardEl(lk,filtering&&i===state.sel);enableCardDrag(a,lk,k);grid.appendChild(a);i++;});
     });
   }else visible.forEach((lk,i)=>grid.appendChild(cardEl(lk,filtering&&i===state.sel)));
   document.getElementById('result-count').textContent=
@@ -485,8 +541,6 @@ function recordUse(lk){
 /* SEARCH & KEYBOARD */
 const search=document.getElementById('search');
 search.addEventListener('input',()=>{state.query=search.value;state.sel=0;renderGrid();});
-document.getElementById('sort').value=state.sort;
-document.getElementById('sort').addEventListener('change',e=>{state.sort=e.target.value;try{localStorage.setItem('dashboard_sort',state.sort);}catch{}renderGrid();});
 
 function gridCols(){
   const g=document.getElementById('grid');
