@@ -303,17 +303,13 @@ function initStorage(){
       if(AppData.version<3){AppData.links.forEach(addServiceTag);AppData.version=3;persist();}
       // v3 → v4: サービス名タグと重複するタグを整理
       if(AppData.version<4){AppData.links.forEach(dropAliasTags);AppData.version=4;persist();}
-      // v4 → v5: 並び順を手動（配列順）に。いま見えている「サービス別・よく使う順」で固定する
+      // v4 → v5: 並び順を手動（配列順）に。いまの「よく使う順」で固定する
       if(AppData.version<5){
         AppData.links.sort((a,b)=>(b.clicks||0)-(a.clicks||0)||(b.lastUsed||0)-(a.lastUsed||0)||a.label.localeCompare(b.label,'ja'));
-        AppData.links=[...groupBy(AppData.links,true)].flatMap(([,ls])=>ls);
         AppData.version=5;persist();
       }
-      // v5 → v6: グループをタグ基準にしたので、グループを件数の多い順に並べ直す（以降は手動）
-      if(AppData.version<6){
-        AppData.links=[...groupBy(AppData.links,true)].flatMap(([,ls])=>ls);
-        AppData.version=6;persist();
-      }
+      // v6: グループの並びは groupOrder（未設定なら件数の多い順）で持つ
+      if(AppData.version<6){AppData.version=6;persist();}
     }
   }catch(e){console.warn('Load failed:',e);}
 }
@@ -430,6 +426,7 @@ function renameTag(t){
     if(nt&&!l.tags.includes(nt))l.tags.push(nt);
   });
   if(state.tags.delete(t)&&nt)state.tags.add(nt);
+  if(AppData.groupOrder)AppData.groupOrder=AppData.groupOrder.map(x=>x===t?nt:x).filter(Boolean);
   saveData();render();
 }
 
@@ -458,25 +455,22 @@ function cardEl(lk,selected,groupTag){
   a.addEventListener('auxclick',e=>{if(e.button===1)recordUse(lk);});
   return a;
 }
-function groupOf(l){
-  // 最初の自分で付けたタグ（サービス名・archive 以外）。無ければサービス名
-  const svc=serviceTag(l.url);
-  return l.tags.find(t=>t!==svc&&t!==ARCHIVE_TAG&&!SERVICE_META[t])||svc||'';
+function groupOrder(){
+  // グループ（タグ）の並び。ドラッグで並べた順 → まだ並べていないタグは件数の多い順で後ろに足す
+  const saved=AppData.groupOrder||[],known=new Set(saved);
+  return [...saved,...allTags().map(([t])=>t).filter(t=>t!==ARCHIVE_TAG&&!known.has(t))];
 }
-function groupKeys(){
-  // リンクID → グループ。どれにも当てはまらないものと1件だけのグループは「その他」('')
-  const cnt=new Map(),keys=new Map();
-  AppData.links.forEach(l=>{const k=groupOf(l);cnt.set(k,(cnt.get(k)||0)+1);});
-  AppData.links.forEach(l=>{const k=groupOf(l);keys.set(l.id,cnt.get(k)<2?'':k);});
-  return keys;
-}
-function groupBy(links,byCount=false){
-  // グループの並びは配列内で先に出てくる順（=手動の順）。「その他」は常に末尾
-  const keys=groupKeys(),m=new Map();
-  links.forEach(l=>{const k=keys.get(l.id);if(!m.has(k))m.set(k,[]);m.get(k).push(l);});
-  // 件数は archive を除いて数える（見出しの件数と揃える）
-  const n=ls=>ls.filter(l=>!isArchived(l)).length;
-  return [...m.entries()].sort((a,b)=>(a[0]==='')-(b[0]==='')||(byCount?n(b[1])-n(a[1]):0));
+function groupBy(links){
+  // タグごとのグループ。複数タグのリンクは複数のグループに出る
+  // 絞り込み中のタグは全件に付いているので見出しにしない。1件だけのグループは作らず「その他」('')へ
+  const m=new Map();
+  groupOrder().forEach(t=>{if(!state.tags.has(t))m.set(t,[]);});
+  links.forEach(l=>l.tags.forEach(t=>m.get(t)?.push(l)));
+  const groups=[...m.entries()].filter(([,ls])=>ls.length>=2);
+  const shown=new Set(groups.flatMap(([,ls])=>ls));
+  const others=links.filter(l=>!shown.has(l));
+  if(others.length)groups.push(['',others]);
+  return groups;
 }
 
 /* DRAG & DROP: カードはグループ内で、見出しはグループごと入れ替え */
@@ -494,14 +488,11 @@ function moveLink(id,targetId,side){
   AppData.links.splice(to,0,lk);
 }
 function moveGroup(key,targetKey,side){
-  const groups=groupBy(AppData.links).filter(([k])=>k!=='');
-  const others=groupBy(AppData.links).find(([k])=>k==='')?.[1]||[];
-  const from=groups.findIndex(([k])=>k===key);
-  const [g]=groups.splice(from,1);
-  let to=groups.findIndex(([k])=>k===targetKey);
+  const order=groupOrder().filter(t=>t!==key);
+  let to=order.indexOf(targetKey);
   if(side==='after')to++;
-  groups.splice(to,0,g);
-  AppData.links=[...groups.flatMap(([,ls])=>ls),...others];
+  order.splice(to,0,key);
+  AppData.groupOrder=order;
 }
 function enableCardDrag(a,lk,key){
   a.draggable=true;
@@ -537,12 +528,14 @@ function renderGrid(){
   // 文字検索中は一致度順のフラット表示（並べ替え不可）
   const grouped=!q.words.length;
   visible=sortLinks(AppData.links.filter(l=>matches(l,q)),q.words);
-  if(grouped)visible=groupBy(visible).flatMap(([,ls])=>ls);
+  // グループ表示ではリンクが複数グループに重複するので、visible も表示順（重複込み）にする
+  const groups=grouped?groupBy(visible):null;
+  if(grouped)visible=groups.flatMap(([,ls])=>ls);
   if(state.sel>=visible.length)state.sel=Math.max(0,visible.length-1);
   const grid=document.getElementById('grid');grid.innerHTML='';
   if(grouped){
     let i=0;
-    groupBy(visible).forEach(([k,ls])=>{
+    groups.forEach(([k,ls])=>{
       const h=el('div','group-head');
       h.append(el('span','gname',SERVICE_META[k]?.name||(k?k:'その他')),el('span','gcount',ls.length));
       enableGroupDrag(h,k);
