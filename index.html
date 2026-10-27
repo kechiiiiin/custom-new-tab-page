@@ -227,6 +227,39 @@ function migrate(s){
   LEGACY_APPS.forEach(a=>links.push({id:newId(),...a,tags:['app'],clicks:0,lastUsed:0,created:Date.now()}));
   return {version:2,links,memo:s.memo||'',tasks:s.tasks||[],legacyCols:s.cols||[]};
 }
+/* SERVICE TAG: URL からサービス名タグを判定 */
+const SERVICE_RULES=[
+  ['github',        (h)=>h==='github.com'],
+  ['gitlab',        (h)=>h==='gitlab.com'],
+  ['confluence',    (h,p)=>h.endsWith('.atlassian.net')&&p.startsWith('/wiki')],
+  ['jira',          (h,p)=>h.endsWith('.atlassian.net')&&!p.startsWith('/wiki')],
+  ['figma',         (h)=>h==='figma.com'],
+  ['google-docs',   (h,p)=>h==='docs.google.com'&&p.startsWith('/document')],
+  ['google-sheets', (h,p)=>h==='docs.google.com'&&p.startsWith('/spreadsheets')],
+  ['google-slides', (h,p)=>h==='docs.google.com'&&p.startsWith('/presentation')],
+  ['google-forms',  (h,p)=>h==='docs.google.com'&&p.startsWith('/forms')],
+  ['google-drive',  (h)=>h==='drive.google.com'],
+  ['google-calendar',(h)=>h==='calendar.google.com'],
+  ['gmail',         (h)=>h==='mail.google.com'],
+  ['aws',           (h)=>h.endsWith('.awsapps.com')||h==='aws.amazon.com'||h.endsWith('.aws.amazon.com')],
+  ['slack',         (h,p,s)=>s==='slack:'||h==='slack.com'||h.endsWith('.slack.com')],
+  ['discord',       (h,p,s)=>s==='discord:'||h==='discord.com'],
+  ['obsidian',      (h,p,s)=>s==='obsidian:'],
+  ['notion',        (h)=>h==='notion.so'||h.endsWith('.notion.site')],
+  ['miro',          (h)=>h==='miro.com'],
+  ['sentry',        (h)=>h==='sentry.io'||h.endsWith('.sentry.io')],
+];
+function serviceTag(url){
+  try{
+    const u=new URL(url),h=u.hostname.replace(/^www\./,'');
+    return SERVICE_RULES.find(([,test])=>test(h,u.pathname,u.protocol))?.[0]||'';
+  }catch{return '';}
+}
+function addServiceTag(lk){
+  const t=serviceTag(lk.url);
+  if(t&&!lk.tags.includes(t))lk.tags.unshift(t);
+}
+
 function initStorage(){
   try{
     const text=localStorage.getItem(STORAGE_KEY);
@@ -234,6 +267,8 @@ function initStorage(){
       const s=JSON.parse(text);
       if(!s.version||s.version<2||!Array.isArray(s.links)){AppData=migrate(s);persist();}
       else AppData={...AppData,...s};
+      // v2 → v3: 既存リンクにサービス名タグを付与
+      if(AppData.version<3){AppData.links.forEach(addServiceTag);AppData.version=3;persist();}
     }
   }catch(e){console.warn('Load failed:',e);}
 }
@@ -468,10 +503,16 @@ function saveModal(){
   if(!url||!label){(url?mLabel:mUrl).focus();return;}
   const tags=parseTags(mTags.value);
   const lk=editingId&&AppData.links.find(l=>l.id===editingId);
+  // 新規 or URL 変更時のみサービス名タグを自動付与（手で外したタグは復活させない）
   if(lk){
-    if(lk.url!==url)delete lk.icon;
+    const urlChanged=lk.url!==url;
+    if(urlChanged)delete lk.icon;
     Object.assign(lk,{url,label,tags});
-  }else AppData.links.push({id:newId(),label,url,tags,clicks:0,lastUsed:0,created:Date.now()});
+    if(urlChanged)addServiceTag(lk);
+  }else{
+    const nl={id:newId(),label,url,tags,clicks:0,lastUsed:0,created:Date.now()};
+    addServiceTag(nl);AppData.links.push(nl);
+  }
   saveData();render();closeModal();
 }
 document.getElementById('add-btn').addEventListener('click',()=>openModal(null));
