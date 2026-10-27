@@ -36,7 +36,12 @@ header button:hover, header a:hover { background: var(--hover); opacity: 1; }
 .tag-row:hover { background: var(--hover); }
 .tag-row.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .tdot { width: 8px; height: 8px; border-radius: 50%; background: hsl(var(--h) 60% 55%); flex-shrink: 0; }
-.tname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-row:hover .tname { text-decoration: underline; text-underline-offset: 3px; }
+.tag-row .tname:hover { text-decoration-thickness: 2px; }
+.tspacer { flex: 1; align-self: stretch; }
+.tag-row:hover .tspacer::after { content: '＋'; display: flex; height: 100%; align-items: center; justify-content: flex-end; font-size: 11px; color: var(--muted); }
+.tag-row.active:hover .tspacer::after { content: '−'; }
 .tcount { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tedit { font-size: 12px; color: var(--muted); padding: 0 4px; border-radius: 4px; visibility: hidden; }
 .tag-row:hover .tedit { visibility: visible; }

@@ -32,7 +32,8 @@
     <div class="side-title">タグ</div>
     <div id="tag-list" class="tag-list"></div>
     <div class="side-hint">
-      クリックで絞り込み（複数選択で AND）<br>
+      名前クリックでそのタグだけに絞り込み<br>
+      行の右側クリックで絞り込みに追加（AND）<br>
       ✎ でタグ名の変更・削除
     </div>
   </aside>
@@ -400,7 +401,16 @@ function renderSidebar(){
     const dot=el('span','tdot');
     const ed=el('span','tedit','✎');ed.title='タグ名を変更 / 削除';
     ed.addEventListener('click',e=>{e.stopPropagation();renameTag(t);});
-    row.append(dot,el('span','tname',t),ed,el('span','tcount',n));
+    // 名前クリック = そのタグだけに絞る（もう一度で解除）、行の残りクリック = 絞り込みに追加/解除
+    const name=el('span','tname',t);name.title=`#${t} だけで絞り込み`;
+    name.addEventListener('click',e=>{
+      e.stopPropagation();
+      const only=state.tags.size===1&&state.tags.has(t);
+      state.tags.clear();if(!only)state.tags.add(t);
+      state.sel=0;render();
+    });
+    row.title=`#${t} を絞り込みに追加`;
+    row.append(dot,name,el('span','tspacer'),ed,el('span','tcount',n));
     row.addEventListener('click',()=>toggleTag(t));
     list.appendChild(row);
   });
