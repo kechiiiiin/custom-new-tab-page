@@ -344,10 +344,19 @@ function tagChip(tag,onClick){
 const state={query:'',tags:new Set(),sel:0};
 let visible=[];
 
+// archive タグ付きは archive で絞り込んだときだけ表示する
+const ARCHIVE_TAG='archive';
+const isArchived=lk=>lk.tags.includes(ARCHIVE_TAG);
+const activeLinks=()=>AppData.links.filter(l=>!isArchived(l));
 function allTags(){
+  // 件数は通常表示される（アーカイブ外の）リンクで数える。archive 自体は末尾に
   const m=new Map();
-  AppData.links.forEach(l=>l.tags.forEach(t=>m.set(t,(m.get(t)||0)+1)));
-  return [...m.entries()].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'ja'));
+  AppData.links.forEach(l=>l.tags.forEach(t=>{
+    if(!m.has(t))m.set(t,0);
+    if(t===ARCHIVE_TAG||!isArchived(l))m.set(t,m.get(t)+1);
+  }));
+  return [...m.entries()].filter(([t,n])=>n>0||t===ARCHIVE_TAG)
+    .sort((a,b)=>(a[0]===ARCHIVE_TAG)-(b[0]===ARCHIVE_TAG)||b[1]-a[1]||a[0].localeCompare(b[0],'ja'));
 }
 
 function parseQuery(q){
@@ -361,6 +370,7 @@ function parseQuery(q){
 function matches(lk,{words,tags}){
   for(const t of state.tags)if(!lk.tags.includes(t))return false;
   for(const t of tags)if(!lk.tags.some(x=>x.startsWith(t)))return false;
+  if(isArchived(lk)&&!state.tags.has(ARCHIVE_TAG)&&!tags.some(t=>ARCHIVE_TAG.startsWith(t)))return false;
   const hay=(lk.label+' '+lk.url+' '+lk.tags.join(' ')).toLowerCase();
   return words.every(w=>hay.includes(w));
 }
@@ -381,7 +391,7 @@ function toggleTag(t){state.tags.has(t)?state.tags.delete(t):state.tags.add(t);s
 function renderSidebar(){
   const list=document.getElementById('tag-list');list.innerHTML='';
   const all=el('button','tag-row'+(state.tags.size?'':' active'));
-  all.append(el('span','tname','すべて'),el('span','tcount',AppData.links.length));
+  all.append(el('span','tname','すべて'),el('span','tcount',activeLinks().length));
   all.addEventListener('click',()=>{state.tags.clear();state.sel=0;render();});
   list.appendChild(all);
   allTags().forEach(([t,n])=>{
@@ -518,7 +528,7 @@ function renderGrid(){
     });
   }else visible.forEach((lk,i)=>grid.appendChild(cardEl(lk,filtering&&i===state.sel)));
   document.getElementById('result-count').textContent=
-    (state.query||state.tags.size)?`${visible.length} / ${AppData.links.length} 件`:`${AppData.links.length} 件`;
+    (state.query||state.tags.size)?`${visible.length} / ${activeLinks().length} 件`:`${activeLinks().length} 件`;
   const empty=document.getElementById('empty');
   if(visible.length){empty.style.display='none';}
   else{
