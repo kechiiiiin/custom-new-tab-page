@@ -40,8 +40,11 @@ header button:hover, header a:hover { background: var(--hover); opacity: 1; }
 .tag-row:hover .tname { text-decoration: underline; text-underline-offset: 3px; }
 .tag-row .tname:hover { text-decoration-thickness: 2px; }
 .tspacer { flex: 1; align-self: stretch; }
-.tag-row:hover .tspacer::after { content: '＋'; display: flex; height: 100%; align-items: center; justify-content: flex-end; font-size: 11px; color: var(--muted); }
-.tag-row.active:hover .tspacer::after { content: '−'; }
+/* ＋/− は常に配置しておき色だけ切り替える（ホバーでレイアウトが動かないように） */
+.tspacer { display: flex; align-items: center; justify-content: flex-end; }
+.tspacer::after { content: '＋'; font-size: 11px; line-height: 1; color: transparent; }
+.tag-row.active .tspacer::after { content: '−'; }
+.tag-row:hover .tspacer::after { color: var(--muted); }
 .tcount { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .tedit { font-size: 12px; color: var(--muted); padding: 0 4px; border-radius: 4px; visibility: hidden; }
 .tag-row:hover .tedit { visibility: visible; }
