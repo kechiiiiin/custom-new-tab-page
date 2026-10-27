@@ -258,6 +258,19 @@ function serviceTag(url){
 function addServiceTag(lk){
   const t=serviceTag(lk.url);
   if(t&&!lk.tags.includes(t))lk.tags.unshift(t);
+  dropAliasTags(lk);
+}
+// サービス名タグと意味が重複する手書きタグ。サービス名タグがあるリンクからだけ外す
+const TAG_ALIASES={
+  'google-docs':['docs','ドキュメント','gdocs'],
+  'google-sheets':['スプシ','sheets','spreadsheet','スプレッドシート'],
+  'google-slides':['slides','スライド'],
+  'google-drive':['drive','ドライブ'],
+  'confluence':['コンフル','wiki'],
+};
+function dropAliasTags(lk){
+  const drop=new Set(lk.tags.flatMap(t=>TAG_ALIASES[t]||[]));
+  if(drop.size)lk.tags=lk.tags.filter(t=>!drop.has(t));
 }
 
 function initStorage(){
@@ -269,6 +282,8 @@ function initStorage(){
       else AppData={...AppData,...s};
       // v2 → v3: 既存リンクにサービス名タグを付与
       if(AppData.version<3){AppData.links.forEach(addServiceTag);AppData.version=3;persist();}
+      // v3 → v4: サービス名タグと重複するタグを整理
+      if(AppData.version<4){AppData.links.forEach(dropAliasTags);AppData.version=4;persist();}
     }
   }catch(e){console.warn('Load failed:',e);}
 }
@@ -508,7 +523,7 @@ function saveModal(){
     const urlChanged=lk.url!==url;
     if(urlChanged)delete lk.icon;
     Object.assign(lk,{url,label,tags});
-    if(urlChanged)addServiceTag(lk);
+    if(urlChanged)addServiceTag(lk);else dropAliasTags(lk);
   }else{
     const nl={id:newId(),label,url,tags,clicks:0,lastUsed:0,created:Date.now()};
     addServiceTag(nl);AppData.links.push(nl);
