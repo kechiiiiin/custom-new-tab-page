@@ -681,7 +681,19 @@ setInterval(()=>{if(document.hidden)location.reload();},RELOAD_INTERVAL_MS);
 /* INIT */
 initStorage();
 render();
-search.focus();
+// 拡張機能が tabs.update で開くため、読み込み直後はアドレスバーがフォーカスを持っていることがある。
+// ページにフォーカスが来た時点で検索窓に移す（モーダル表示中や他の入力中は触らない）
+function focusSearch(){
+  if(modal.classList.contains('open'))return;
+  const a=document.activeElement;
+  if(a&&a!==document.body&&a!==search)return;
+  search.focus();
+}
+focusSearch();
+window.addEventListener('focus',focusSearch);
+window.addEventListener('pageshow',focusSearch);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)focusSearch();});
+[100,300,800].forEach(ms=>setTimeout(focusSearch,ms));
 </script>
 </body>
 </html>
